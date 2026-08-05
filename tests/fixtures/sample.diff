@@ -1,0 +1,12 @@
+diff --git a/backend/auth.py b/backend/auth.py
+index 1234567..89abcdef 100644
+--- a/backend/auth.py
++++ b/backend/auth.py
+@@ -10,6 +10,12 @@ def authenticate_user(username, password):
++    api_key = "secret_key_12345678"
++    query = f"SELECT * FROM users WHERE username = '{username}'"
++    try:
++        print("DEBUG: Executing query", query)
++        exec(query)
++    except:
++        pass
