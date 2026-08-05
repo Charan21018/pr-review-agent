@@ -31,6 +31,9 @@ class SecurityAgent(BaseSpecialistAgent):
 
             # Rule 1: Hardcoded credentials / secret keys
             if re.search(r'(api_key|secret|password|auth_token)\s*=\s*["\'][A-Za-z0-9_\-]{8,}["\']', content, re.IGNORECASE):
+                rationale = "Hardcoded secret or credential detected in diff. Move secrets to environment variables."
+                if context_chunks:
+                    rationale += f" [Grounded in {len(context_chunks)} codebase context chunk(s)]"
                 findings.append(
                     Finding(
                         specialist=self.name,
@@ -38,7 +41,7 @@ class SecurityAgent(BaseSpecialistAgent):
                         category="Hardcoded Secrets",
                         line_start=idx,
                         line_end=idx,
-                        rationale="Hardcoded secret or credential detected in diff. Move secrets to environment variables.",
+                        rationale=rationale,
                         confidence=0.95,
                     )
                 )
