@@ -20,14 +20,20 @@ from backend.memory.tiger_client import TigerMemoryClient
 global_memory_client = TigerMemoryClient()
 
 
-def main():
+import asyncio
+
+async def async_main():
     parser = argparse.ArgumentParser(description="Ingest codebase into memory store.")
     parser.add_argument("--repo", default=".", help="Path to repository root")
     args = parser.parse_args()
 
     ingestor = CodeIngestor(global_memory_client)
-    count = ingestor.ingest_directory(args.repo, repo="ai-pr-review-agent")
+    count = await ingestor.ingest_directory(args.repo, repo="ai-pr-review-agent")
     print(f"[OK] Ingested {count} code chunks from '{args.repo}' into Tiger Memory Store.")
+
+
+def main():
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

@@ -11,13 +11,16 @@ Invariants enforced here (context-graph.json):
 import hashlib
 import hmac
 import json
+import os
 from typing import Callable, Awaitable, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, APIRouter
 
 from backend.settings import settings
 
+# Both app (for tests) and router (for main.py) are defined here
 app = FastAPI(title="AI PR Review Agent — Webhook Service")
+router = APIRouter()
 
 # ---------------------------------------------------------------------------
 # Dedup store
@@ -33,13 +36,11 @@ _seen_deliveries: set[str] = set()
 # ---------------------------------------------------------------------------
 async def _production_enqueue(payload: dict) -> str:
     """Enqueue a review job via ARQ + Redis. Imported lazily: never executed in tests."""
-    from arq import create_pool  # noqa: PLC0415 — intentional lazy import
-    from arq.connections import RedisSettings  # noqa: PLC0415
+    from backend.queue_enqueuer import enqueue_review_job  # noqa: PLC0415 — intentional lazy import
 
-    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    job = await pool.enqueue_job("review_pr", payload)
-    await pool.aclose()
-    return job.job_id
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    delivery_id = payload.get("delivery_id", "")
+    return await enqueue_review_job(payload_bytes, delivery_id=delivery_id)
 
 
 def get_enqueue_fn() -> Callable[[dict], Awaitable[str]]:
@@ -60,26 +61,13 @@ def _verify_signature(body: bytes, signature: str) -> bool:
     return hmac.compare_digest(signature, expected)
 
 
-# ---------------------------------------------------------------------------
-# Webhook endpoint
-# ---------------------------------------------------------------------------
-@app.post("/webhook")
-async def github_webhook(
+async def handle_webhook(
     request: Request,
-    x_hub_signature_256: Optional[str] = Header(None),
-    x_github_delivery: Optional[str] = Header(None),
-    x_github_event: Optional[str] = Header(None),
-    enqueue_fn: Callable[[dict], Awaitable[str]] = Depends(get_enqueue_fn),
+    x_hub_signature_256: Optional[str],
+    x_github_delivery: Optional[str],
+    x_github_event: Optional[str],
+    enqueue_fn: Callable[[dict], Awaitable[str]],
 ) -> dict:
-    """
-    Receive a GitHub webhook, verify it, deduplicate it, and enqueue a review job.
-
-    Gates (in order — fail fast, side-effect nothing before all gates pass):
-      1. Signature present and valid  → 401 if not
-      2. Delivery ID not seen before  → 200 "duplicate" if already processed
-      3. Event is pull_request        → 200 "ignored" for other event types
-      4. Enqueue job                  → 200 "queued" with job_id
-    """
     body = await request.body()
 
     # Gate 1 — HMAC signature (I2: every inbound path has a trust guard)
@@ -100,6 +88,30 @@ async def github_webhook(
 
     # Gate 4 — Enqueue for async processing by specialist agents (M2)
     payload: dict = json.loads(body) if body else {}
+    payload["delivery_id"] = x_github_delivery
     job_id = await enqueue_fn(payload)
 
     return {"status": "queued", "job_id": str(job_id), "delivery_id": x_github_delivery}
+
+
+# Register endpoint on both app and router
+@app.post("/webhook")
+async def app_github_webhook(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(None),
+    x_github_delivery: Optional[str] = Header(None),
+    x_github_event: Optional[str] = Header(None),
+    enqueue_fn: Callable[[dict], Awaitable[str]] = Depends(get_enqueue_fn),
+) -> dict:
+    return await handle_webhook(request, x_hub_signature_256, x_github_delivery, x_github_event, enqueue_fn)
+
+
+@router.post("/webhook")
+async def router_github_webhook(
+    request: Request,
+    x_hub_signature_256: Optional[str] = Header(None),
+    x_github_delivery: Optional[str] = Header(None),
+    x_github_event: Optional[str] = Header(None),
+    enqueue_fn: Callable[[dict], Awaitable[str]] = Depends(get_enqueue_fn),
+) -> dict:
+    return await handle_webhook(request, x_hub_signature_256, x_github_delivery, x_github_event, enqueue_fn)

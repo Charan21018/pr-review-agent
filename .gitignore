@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+pg_service.conf
+
+# Runtime data
+*.db
+*.sqlite3
+
+# Node / frontend
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+
+# Agent/tooling scaffolding state (not project source)
+.genesis/
+.serena/
+genesis-kit/
+
+# Contains live TigerCloud DB credentials
+tiger-cloud/
+
+# Local dev scratch scripts (contain hardcoded secrets meant to mirror .env)
+compute_signature.py
+test_webhook.ps1
+payload.json
+
+# OS
+.DS_Store
+Thumbs.db
