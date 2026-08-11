@@ -51,10 +51,10 @@ class CircuitBreaker:
 
     Usage::
 
-        breaker = CircuitBreaker("openai", config=CircuitBreakerConfig(failure_threshold=3))
+        breaker = CircuitBreaker("gemini", config=CircuitBreakerConfig(failure_threshold=3))
 
         @breaker.protect
-        async def call_openai(prompt: str) -> str:
+        async def call_gemini(prompt: str) -> str:
             ...
     """
 
@@ -171,7 +171,7 @@ class CircuitBreakerRegistry:
 registry = CircuitBreakerRegistry()
 
 # Pre-register breakers for known external dependencies
-registry.get("openai", CircuitBreakerConfig(failure_threshold=5, timeout_seconds=60))
+registry.get("gemini", CircuitBreakerConfig(failure_threshold=5, timeout_seconds=60))
 registry.get("anthropic", CircuitBreakerConfig(failure_threshold=5, timeout_seconds=60))
 registry.get("tigerdb", CircuitBreakerConfig(failure_threshold=3, timeout_seconds=30))
 registry.get("github_api", CircuitBreakerConfig(failure_threshold=3, timeout_seconds=30))

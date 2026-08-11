@@ -1,5 +1,5 @@
 """
-backend/tools/llm_client.py — OpenAI LLM client wrapper with mock fallback.
+backend/tools/llm_client.py — Gemini LLM client wrapper with mock fallback.
 
 Handles:
 - Chat completions with retry on rate limits
@@ -12,24 +12,26 @@ import time
 import json
 import asyncio
 from typing import Any, Optional
-from openai import AsyncOpenAI, RateLimitError, APITimeoutError
+from google import genai
+from google.genai import types as genai_types
+from google.genai.errors import ClientError, ServerError
 
 _PRICING = {
-    "gpt-4o": {"input": 2.50, "output": 10.00},
-    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
 }
 
-_client: Optional[AsyncOpenAI] = None
+_client: Optional[genai.Client] = None
 
 
-def _get_client() -> AsyncOpenAI:
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY environment variable not set")
-        _client = AsyncOpenAI(api_key=api_key)
+            raise RuntimeError("GEMINI_API_KEY environment variable not set")
+        _client = genai.Client(api_key=api_key)
     return _client
 
 
@@ -164,33 +166,39 @@ async def chat_completion(
     agent_name: Optional[str] = None,
 ) -> dict[str, Any]:
     """
-    Call OpenAI chat completion with retries.
+    Call Gemini chat completion with retries.
     Falls back to high-quality mock responses if the API quota is exhausted or errors occur.
     """
     try:
         client = _get_client()
-        kwargs: dict[str, Any] = {
-            "model": model,
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": system_prompt,
             "temperature": temperature,
-            "max_tokens": max_tokens,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "max_output_tokens": max_tokens,
+            # These calls are deterministic extraction (structured findings, not
+            # open-ended reasoning) — disable thinking so it can't consume the
+            # entire max_output_tokens budget and leave candidates_token_count/
+            # text as None.
+            "thinking_config": genai_types.ThinkingConfig(thinking_budget=0),
         }
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
+            config_kwargs["response_mime_type"] = "application/json"
+        config = genai_types.GenerateContentConfig(**config_kwargs)
 
         for attempt in range(max_retries):
             t0 = time.monotonic()
             try:
-                response = await client.chat.completions.create(**kwargs)
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=user_prompt,
+                    config=config,
+                )
                 latency_ms = int((time.monotonic() - t0) * 1000)
-                usage = response.usage
-                tokens_in = usage.prompt_tokens if usage else 0
-                tokens_out = usage.completion_tokens if usage else 0
+                usage = response.usage_metadata
+                tokens_in = (usage.prompt_token_count or 0) if usage else 0
+                tokens_out = (usage.candidates_token_count or 0) if usage else 0
                 cost_usd = compute_cost(model, tokens_in, tokens_out)
-                text = response.choices[0].message.content or ""
+                text = response.text or ""
                 return {
                     "text": text,
                     "tokens_in": tokens_in,
@@ -199,16 +207,17 @@ async def chat_completion(
                     "latency_ms": latency_ms,
                     "model": model,
                 }
-            except RateLimitError:
-                if attempt == max_retries - 1:
-                    raise
-                await asyncio.sleep(2 ** attempt)
-            except APITimeoutError:
+            except ServerError:
                 if attempt == max_retries - 1:
                     raise
                 await asyncio.sleep(1)
+            except ClientError as e:
+                if getattr(e, "code", None) == 429 and attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise
     except Exception as e:
-        print(f"[Warning] OpenAI chat completion failed ({e}). Falling back to mock agent response.")
+        print(f"[Warning] Gemini chat completion failed ({e}). Falling back to mock agent response.")
         if agent_name is not None:
             # Caller told us explicitly which specialist this is — trust it.
             # (Inferring from system_prompt text is unreliable: prompts share

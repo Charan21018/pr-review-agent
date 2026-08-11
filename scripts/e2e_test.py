@@ -2,7 +2,7 @@
 """scripts/e2e_test.py — End-to-end smoke test for the PR review pipeline.
 
 Runs the full aggregator pipeline (all 4 specialists, in mock-LLM mode since
-no OPENAI_API_KEY is required) against the sample diff fixture, with GitHub
+no GEMINI_API_KEY is required) against the sample diff fixture, with GitHub
 posting and the HITL decision mocked out, and prints the resulting outcome.
 """
 import asyncio
