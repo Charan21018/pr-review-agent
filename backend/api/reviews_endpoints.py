@@ -3,6 +3,7 @@ backend/api/reviews_endpoints.py — API endpoints for listing PR reviews and fi
 """
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any
+import json
 import uuid
 import os
 import asyncpg
@@ -37,6 +38,58 @@ async def list_reviews():
         return [dict(r) for r in rows]
     except Exception as e:
         print(f"[Error] Failed to fetch review records: {e}")
+        return []
+    finally:
+        await conn.close()
+
+
+@router.get("/{review_id}", response_model=Dict[str, Any])
+async def get_review(review_id: uuid.UUID):
+    """Retrieve a single PR review record by id."""
+    conn = await _get_db_conn()
+    try:
+        sql = """
+        SELECT id::text, repo, pr_number, created_at, status, summary, total_cost_usd, total_tokens
+        FROM pr_review_records
+        WHERE id = $1;
+        """
+        row = await conn.fetchrow(sql, review_id)
+    except Exception as e:
+        print(f"[Error] Failed to fetch review {review_id}: {e}")
+        raise HTTPException(status_code=500, detail="Database error")
+    finally:
+        await conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return dict(row)
+
+
+@router.get("/{review_id}/trace", response_model=List[Dict[str, Any]])
+async def get_review_trace(review_id: uuid.UUID):
+    """Retrieve the full observability event/span trace for a given PR review."""
+    conn = await _get_db_conn()
+    try:
+        sql = """
+        SELECT id::text, ts, review_id::text, agent, event_type, span_id::text,
+               parent_span::text, model, tokens_in, tokens_out, cost_usd, latency_ms,
+               outcome, confidence, payload
+        FROM agent_events
+        WHERE review_id = $1
+        ORDER BY ts ASC;
+        """
+        rows = await conn.fetch(sql, review_id)
+        events = []
+        for r in rows:
+            d = dict(r)
+            # asyncpg returns JSONB as a raw string; parse it so the frontend
+            # gets a real object for TraceEvent.payload, not a string.
+            raw_payload = d.get("payload")
+            d["payload"] = json.loads(raw_payload) if isinstance(raw_payload, str) else (raw_payload or {})
+            events.append(d)
+        return events
+    except Exception as e:
+        print(f"[Error] Failed to fetch trace for review {review_id}: {e}")
         return []
     finally:
         await conn.close()

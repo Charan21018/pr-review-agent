@@ -22,6 +22,58 @@ async def _get_db_conn() -> asyncpg.Connection:
     return await asyncpg.connect(url, ssl=True)
 
 
+@router.get("", response_model=Dict[str, Any])
+async def get_economics_overview():
+    """Dashboard-shaped economics overview: daily spend, review count, average
+    latency, total tokens, and per-agent cost breakdown."""
+    conn = await _get_db_conn()
+    try:
+        overview_sql = """
+        SELECT
+            COALESCE(SUM(cost_usd) FILTER (WHERE ts >= now() - INTERVAL '24 hours'), 0.0) AS daily_cost_usd,
+            COALESCE(SUM(tokens_in + tokens_out), 0) AS total_tokens_consumed,
+            COALESCE(AVG(latency_ms), 0.0) AS average_latency_ms
+        FROM agent_events
+        WHERE event_type = 'span.end' OR event_type = 'llm.call';
+        """
+        overview = await conn.fetchrow(overview_sql)
+
+        total_reviews_count = await conn.fetchval("SELECT COUNT(*) FROM pr_review_records;")
+
+        agent_cost_rows = await conn.fetch(
+            """
+            SELECT agent, COALESCE(SUM(cost_usd), 0.0) AS cost
+            FROM agent_events
+            WHERE cost_usd IS NOT NULL
+            GROUP BY agent;
+            """
+        )
+        # Postgres SUM/AVG over int/float columns come back as `numeric`, which
+        # asyncpg maps to Decimal — FastAPI's Any-typed encoder serializes an
+        # unrounded Decimal as a JSON string, breaking the frontend's `number`
+        # typing. Cast to float explicitly before rounding.
+        agent_costs = {row["agent"]: round(float(row["cost"]), 6) for row in agent_cost_rows}
+
+        return {
+            "daily_cost_usd": round(float(overview["daily_cost_usd"]), 6),
+            "total_reviews_count": total_reviews_count,
+            "average_latency_ms": round(float(overview["average_latency_ms"]), 2),
+            "total_tokens_consumed": overview["total_tokens_consumed"],
+            "agent_costs": agent_costs,
+        }
+    except Exception as e:
+        print(f"[Error] Failed to query economics overview: {e}")
+        return {
+            "daily_cost_usd": 0.0,
+            "total_reviews_count": 0,
+            "average_latency_ms": 0.0,
+            "total_tokens_consumed": 0,
+            "agent_costs": {},
+        }
+    finally:
+        await conn.close()
+
+
 @router.get("/health", response_model=List[Dict[str, Any]])
 async def get_agent_health_metrics():
     """Query the agent_health_1m TimescaleDB continuous aggregate for real-time cost & latency metrics."""

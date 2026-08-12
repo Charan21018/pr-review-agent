@@ -82,6 +82,19 @@ async def run_specialists_node(state: ReviewState) -> Dict[str, Any]:
                 review_id, agent.name, uuid.uuid4(), 0, outcome="success",
                 payload={"findings_count": len(result)}
             )
+            # Record the LLM call's cost/token usage (falls back skipped it —
+            # last_call_meta stays None on a mock-fallback path with no
+            # agent_name, but every real specialist call sets it).
+            meta = agent.last_call_meta
+            if meta:
+                await event_tracker.track_llm_call(
+                    review_id, agent.name, uuid.uuid4(),
+                    model=meta.get("model", "unknown"),
+                    tokens_in=meta.get("tokens_in", 0),
+                    tokens_out=meta.get("tokens_out", 0),
+                    cost_usd=meta.get("cost_usd", 0.0),
+                    latency_ms=meta.get("latency_ms", 0),
+                )
         else:
             print(f"[Warning] Agent {agent.name} failed or timed out: {result}")
             await event_tracker.track_span_end(
@@ -162,6 +175,14 @@ Add a clear final recommendation: APPROVE, REQUEST_CHANGES, or ESCALATE_TO_HUMAN
         cost_usd = completion["cost_usd"]
         tokens_in = completion["tokens_in"]
         tokens_out = completion["tokens_out"]
+        await event_tracker.track_llm_call(
+            review_id, "aggregator", span_id,
+            model=completion.get("model", "unknown"),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
+            latency_ms=completion.get("latency_ms", 0),
+        )
     except Exception as e:
         summary = f"Review completed with {len(deduped_findings)} findings. Recommendation: {recommendation}."
 

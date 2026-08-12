@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import { NavBar } from "../components/NavBar";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains-mono" });
 
 export const metadata: Metadata = {
   title: "AI PR Review Agent Dashboard",
@@ -13,19 +17,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
-        <header className="navbar">
-          <div className="logo-container">
-            <span style={{ fontSize: '1.5rem' }}>🤖</span>
-            <Link href="/" className="logo-text">AI PR Reviewer</Link>
-          </div>
-          <nav className="nav-links">
-            <Link href="/" className="nav-link">Reviews</Link>
-            <Link href="/hitl" className="nav-link">HITL Queue</Link>
-            <Link href="/economics" className="nav-link">Economics</Link>
-          </nav>
-        </header>
+        <div className="bg-mesh" />
+        <NavBar />
         {children}
       </body>
     </html>

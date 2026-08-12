@@ -34,13 +34,14 @@ class SecurityAgent(BaseSpecialistAgent):
             context_section=context_section,
         )
 
-        parsed, _meta = await chat_completion_json(
+        parsed, meta = await chat_completion_json(
             model=get_model_for_agent("security"),
             system_prompt=render("security.system") if False else _get_system("security"),
             user_prompt=user_prompt,
             temperature=0.1,
             agent_name=self.name,
         )
+        self.last_call_meta = meta
 
         return _parse_findings(parsed, specialist=self.name, context_chunks=context_chunks)
 
@@ -62,13 +63,14 @@ class QualityAgent(BaseSpecialistAgent):
             context_section=context_section,
         )
 
-        parsed, _meta = await chat_completion_json(
+        parsed, meta = await chat_completion_json(
             model=get_model_for_agent("quality"),
             system_prompt=_get_system("quality"),
             user_prompt=user_prompt,
             temperature=0.1,
             agent_name=self.name,
         )
+        self.last_call_meta = meta
 
         return _parse_findings(parsed, specialist=self.name, context_chunks=context_chunks)
 
@@ -90,13 +92,14 @@ class TestsAgent(BaseSpecialistAgent):
             context_section=context_section,
         )
 
-        parsed, _meta = await chat_completion_json(
+        parsed, meta = await chat_completion_json(
             model=get_model_for_agent("tests"),
             system_prompt=_get_system("tests"),
             user_prompt=user_prompt,
             temperature=0.1,
             agent_name=self.name,
         )
+        self.last_call_meta = meta
 
         return _parse_findings(parsed, specialist=self.name, context_chunks=context_chunks)
 
@@ -118,13 +121,14 @@ class DocsAgent(BaseSpecialistAgent):
             context_section=context_section,
         )
 
-        parsed, _meta = await chat_completion_json(
+        parsed, meta = await chat_completion_json(
             model=get_model_for_agent("docs"),
             system_prompt=_get_system("docs"),
             user_prompt=user_prompt,
             temperature=0.1,
             agent_name=self.name,
         )
+        self.last_call_meta = meta
 
         return _parse_findings(parsed, specialist=self.name, context_chunks=context_chunks)
 

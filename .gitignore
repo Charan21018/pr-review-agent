@@ -32,6 +32,9 @@ frontend/coverage/
 .serena/
 genesis-kit/
 
+# Personal Claude Code permission overrides (per-machine, not project config)
+.claude/settings.local.json
+
 # Contains live TigerCloud DB credentials
 tiger-cloud/
 

@@ -42,6 +42,9 @@ app.add_middleware(
 )
 
 app.include_router(webhook_router, prefix="/github")
-app.include_router(hitl_router)
-app.include_router(economics_router)
-app.include_router(reviews_router)
+# The frontend dashboard (frontend/src/lib/api.ts) calls every one of these
+# under an /api prefix — keep it here rather than baking it into each
+# router's own prefix, since that's a deployment/mounting concern.
+app.include_router(hitl_router, prefix="/api")
+app.include_router(economics_router, prefix="/api")
+app.include_router(reviews_router, prefix="/api")
