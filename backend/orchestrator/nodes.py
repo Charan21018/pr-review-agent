@@ -15,6 +15,7 @@ from backend.agents.aggregator import Aggregator
 from backend.agents.schemas import Finding, SeverityEnum
 from backend.observability.events import event_tracker
 from backend.tools.llm_client import chat_completion
+from backend.tools.model_router import get_model_for_agent
 from backend.api.github_client import GitHubClient
 
 # DB imports
@@ -151,10 +152,11 @@ Add a clear final recommendation: APPROVE, REQUEST_CHANGES, or ESCALATE_TO_HUMAN
     tokens_out = 0
     try:
         completion = await chat_completion(
-            model="gpt-4o-mini",
+            model=get_model_for_agent("orchestrator"),
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,
+            agent_name="orchestrator",
         )
         summary = completion["text"]
         cost_usd = completion["cost_usd"]
@@ -172,11 +174,15 @@ Add a clear final recommendation: APPROVE, REQUEST_CHANGES, or ESCALATE_TO_HUMAN
     # Persist the review and findings to the PostgreSQL database!
     conn = await _get_db_conn()
     try:
-        # 1. Insert pr_review_records
-        await conn.execute(
+        # 1. Insert pr_review_records. review_id is the GitHub delivery_id, so a
+        # redelivered webhook (same id) must be a harmless no-op here, matching
+        # the idempotency invariant the webhook layer already assumes (M1).
+        inserted = await conn.fetchrow(
             """
             INSERT INTO pr_review_records (id, repo, pr_number, created_at, status, summary, total_cost_usd, total_tokens)
             VALUES ($1, $2, $3, now(), $4, $5, $6, $7)
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
             """,
             review_id,
             state["repo"],
@@ -186,6 +192,18 @@ Add a clear final recommendation: APPROVE, REQUEST_CHANGES, or ESCALATE_TO_HUMAN
             cost_usd,
             tokens_in + tokens_out
         )
+        if inserted is None:
+            print(f"[Info] Review {review_id} already persisted (duplicate delivery) — skipping finding inserts.")
+            return {
+                "recommendation": recommendation,
+                "overall_confidence": overall_confidence,
+                "summary": summary,
+                "has_critical": has_critical,
+                "cost_usd": cost_usd,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "latency_ms": duration_ms,
+            }
 
         # 2. Insert individual finding_records
         for f in deduped_findings:
@@ -256,13 +274,16 @@ async def post_results_node(state: ReviewState) -> Dict[str, Any]:
     if token and not token.startswith("ghp_XXX") and not token.startswith("github_pat_YOUR"):
         try:
             gh = GitHubClient(token)
-            gh.post_review(
+            posted = gh.post_review(
                 repo_full_name=state["repo"],
                 pull_number=state["pr_number"],
                 body=state["summary"],
                 decision=state["recommendation"]
             )
-            print("[GitHub] Posted review comment successfully.")
+            if posted:
+                print("[GitHub] Posted review comment successfully.")
+            else:
+                print(f"[GitHub] Review NOT posted for PR {state['pr_number']} — see the [DLQ] line above for the reason (commonly a token permissions issue).")
         except Exception as e:
             print(f"[Error] Failed to post review to GitHub: {e}")
     else:

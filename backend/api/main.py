@@ -1,3 +1,10 @@
+from dotenv import load_dotenv
+
+# Must run before any backend module is imported: backend.db.session reads
+# TIGER_DATABASE_URL at module import time (via the hitl_endpoints import
+# below), so the shell's environment is not enough on its own.
+load_dotenv()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

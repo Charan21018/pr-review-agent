@@ -9,6 +9,14 @@ import os
 import sys
 import time
 import asyncio
+
+from dotenv import load_dotenv
+
+# Must run before any backend module is imported (GEMINI_API_KEY, GITHUB_TOKEN,
+# TIGER_DATABASE_URL, REDIS_URL are all read at import time or job-execution
+# time by modules pulled in via backend.queue.worker below).
+load_dotenv()
+
 import redis as sync_redis
 
 from arq.jobs import deserialize_job

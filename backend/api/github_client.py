@@ -1,7 +1,8 @@
 try:
-    from github import Github
+    from github import Github, GithubException
 except Exception:  # pragma: no cover
     Github = None
+    GithubException = Exception
 
 import logging
 import os
@@ -65,7 +66,7 @@ class GitHubClient:
                     return _StubRepo()
             self.client = _StubClient()
 
-    def post_review(self, repo_full_name: str, pull_number: int, body: str, decision: str = "APPROVE"):
+    def post_review(self, repo_full_name: str, pull_number: int, body: str, decision: str = "APPROVE") -> bool:
         """Post a review comment on a PR.
 
         Parameters:
@@ -74,24 +75,25 @@ class GitHubClient:
             body: markdown text of the review
             decision: "APPROVE" or "REQUEST_CHANGES"
 
-        Never raises: retries with exponential backoff, then trips a circuit
-        breaker after repeated failures and routes to a dead-letter log line.
+        Returns True if the review was actually posted, False otherwise. Never
+        raises: retries with exponential backoff, then trips a circuit breaker
+        after repeated failures and routes to a dead-letter log line.
         """
         if not self.token:
             logger.warning("GITHUB_TOKEN not set; skipping review post for PR %s", pull_number)
-            return
+            return False
 
         if _circuit_is_open():
             logger.warning("GitHub API circuit breaker is open; skipping review post for PR %s", pull_number)
             print(f"[DLQ] Review posting failed for PR {pull_number}")
-            return
+            return False
 
         last_exc: Optional[Exception] = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
                 self._post_review_once(repo_full_name, pull_number, body, decision)
                 _record_success()
-                return
+                return True
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
@@ -104,16 +106,40 @@ class GitHubClient:
         _record_failure()
         logger.warning("Review posting failed for PR %s after %d attempts: %s", pull_number, _MAX_ATTEMPTS, last_exc)
         print(f"[DLQ] Review posting failed for PR {pull_number}")
+        return False
 
     def _post_review_once(self, repo_full_name: str, pull_number: int, body: str, decision: str) -> None:
         repo = self.client.get_repo(repo_full_name)
         pr = repo.get_pull(pull_number)
-        if decision.upper() == "APPROVE":
-            pr.create_review(event="APPROVE", body=body)
-        elif decision.upper() == "REQUEST_CHANGES":
-            pr.create_review(event="REQUEST_CHANGES", body=body)
-        else:
+        event = decision.upper() if decision.upper() in ("APPROVE", "REQUEST_CHANGES") else None
+        if event is None:
             pr.create_issue_comment(body)  # fallback as plain comment
+            return
+
+        try:
+            pr.create_review(event=event, body=body)
+        except GithubException as exc:
+            # GitHub rejects APPROVE/REQUEST_CHANGES from the same account that
+            # opened the PR (common in local/solo testing where GITHUB_TOKEN
+            # belongs to the PR author). A plain COMMENT review has no such
+            # restriction, so fall back to that rather than burning the retry
+            # budget on a call that will never succeed.
+            if self._is_self_review_rejection(exc):
+                logger.info(
+                    "GitHub rejected %s on PR %s as a self-review; falling back to a COMMENT review.",
+                    event, pull_number,
+                )
+                pr.create_review(event="COMMENT", body=body)
+            else:
+                raise
+
+    @staticmethod
+    def _is_self_review_rejection(exc: "GithubException") -> bool:
+        if getattr(exc, "status", None) != 422:
+            return False
+        data = getattr(exc, "data", None)
+        errors = data.get("errors", []) if isinstance(data, dict) else []
+        return any("own pull request" in str(e).lower() for e in errors)
 
     async def get_pull_request_diff(self, repo_full_name: str, pull_number: int) -> str:
         """Fetch the raw diff of a pull request using httpx."""

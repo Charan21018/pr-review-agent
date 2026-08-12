@@ -94,15 +94,19 @@ async def search_chunks(
     pool = await _get_pool()
     embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
-    repo_filter = "AND repo = $2" if repo else ""
-    path_filter = "AND path LIKE $3 || '%'" if path_prefix else ""
-
-    # Build args list
+    # Build args list, assigning $-placeholders by position as each optional
+    # filter is appended — $1 (embedding) and $2 (LIMIT) are always present,
+    # so repo/path_prefix must not be hardcoded to $2/$3 (that previously
+    # collided with the LIMIT placeholder and made Postgres infer $2 as text).
     args: list = [embedding_str, top_k * 3]
+    repo_filter = ""
+    path_filter = ""
     if repo:
         args.append(repo)
+        repo_filter = f"AND repo = ${len(args)}"
     if path_prefix:
         args.append(path_prefix)
+        path_filter = f"AND path LIKE ${len(args)} || '%'"
 
     # Reciprocal Rank Fusion of vector and FTS results
     sql = f"""

@@ -24,6 +24,17 @@ You need these installed:
 - Python 3.14 (already have it)
 - Redis (for the job queue)
 - ngrok (to expose your local server to GitHub)
+- A reachable Postgres/TigerDB instance (for RAG memory + review/finding storage)
+- Node.js (only if you want the Next.js dashboard in `frontend/`)
+
+---
+
+## Step 0 — Install Python dependencies
+
+```powershell
+cd "d:\Documents\AI PR Review Agent"
+pip install -r requirements.txt
+```
 
 ---
 
@@ -66,7 +77,8 @@ Open `.env` and confirm these are filled in:
 |----------|-----------|
 | `GITHUB_TOKEN` | Your GitHub Personal Access Token (needs `repo` scope) |
 | `GITHUB_WEBHOOK_SECRET` | Random secret — you will paste this into GitHub webhook settings |
-| `OPENAI_API_KEY` | Your OpenAI API key (for LLM calls) |
+| `GEMINI_API_KEY` | Your Gemini API key (for LLM calls + embeddings) |
+| `TIGER_DATABASE_URL` | Postgres/TigerDB connection string (RAG memory, reviews, findings) |
 | `REDIS_URL` | `redis://localhost:6379` (default) |
 
 Also add this line to `.env` (needed so the worker knows which repo to post reviews to):
@@ -74,19 +86,20 @@ Also add this line to `.env` (needed so the worker knows which repo to post revi
 GITHUB_REPO=owner/your-repo-name
 ```
 
+Note: `backend/api/main.py` and `run_worker.py` both call `load_dotenv()` as
+the very first thing they do, so `.env` is picked up automatically — you no
+longer need to load it into the shell by hand. Just make sure you launch
+these commands from the project root (`.env`'s location), and restart both
+processes any time you edit `.env` (env vars are read once at startup).
+
 ---
 
-## Step 4 — Load the .env and start the FastAPI server
+## Step 4 — Start the FastAPI server
 
 Open **Terminal 1** in the project folder:
 
 ```powershell
 cd "d:\Documents\AI PR Review Agent"
-
-# Load .env variables into current shell
-Get-Content .env | Where-Object { $_ -notmatch "^#" -and $_ -ne "" } | ForEach-Object { $parts = $_ -split "=", 2; [System.Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim()) }
-
-# Start the FastAPI server
 python -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -103,11 +116,6 @@ Open **Terminal 2** in the project folder:
 
 ```powershell
 cd "d:\Documents\AI PR Review Agent"
-
-# Load .env
-Get-Content .env | Where-Object { $_ -notmatch "^#" -and $_ -ne "" } | ForEach-Object { $parts = $_ -split "=", 2; [System.Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim()) }
-
-# Start the worker
 python run_worker.py
 ```
 
@@ -189,18 +197,37 @@ Your PR on GitHub will have a **new review** posted by the bot with findings and
 
 | Problem | Fix |
 |---------|-----|
-| Webhook returns 401 | `GITHUB_WEBHOOK_SECRET` in `.env` doesn't match what you typed in GitHub settings |
+| Webhook returns 401 | `GITHUB_WEBHOOK_SECRET` in `.env` doesn't match what you typed in GitHub settings. Also confirm Terminal 1 was started from the project root (`.env` must be findable) and restarted after any edit to `.env` |
 | Worker not picking up jobs | Check Redis is running: `redis-cli ping` |
-| "GitHub token not provided" | `GITHUB_TOKEN` not loaded in Terminal 2 — re-run the env load step |
+| Findings look identical/canned on every PR | `GEMINI_API_KEY` failed to load or is invalid — check for a `[Warning] Gemini chat completion failed` line in the worker log |
 | ngrok URL changed | Free ngrok URLs reset on restart — update the webhook URL in GitHub settings |
-| OpenAI errors | Check `OPENAI_API_KEY` is valid and has credits |
+| Gemini errors / 404 on a model | `gemini-2.5-pro` 404s on free-tier keys; the router already defaults every agent to `gemini-2.5-flash`. Check `GEMINI_API_KEY` is valid and has quota |
+| Review never actually posts on GitHub | `PyGithub` isn't installed — `GitHubClient` silently falls back to a no-op stub. Run `pip install PyGithub` (now in `requirements.txt`) |
+| DB/RAG errors (context retrieval, review storage) | `TIGER_DATABASE_URL` unreachable or schema not applied — run `python scripts/run_postgres_migrations.py` once against a fresh database |
 
 ---
 
-## Quick Reference — All 3 terminals
+## Optional — Step 10: Run the dashboard
+
+`frontend/` is a Next.js dashboard (review list, findings, cost charts, HITL
+queue) that talks to the FastAPI server at `http://localhost:8000` by default
+(CORS is already open for local dev in `backend/api/main.py`).
+
+Open **Terminal 4**:
+```powershell
+cd "d:\Documents\AI PR Review Agent\frontend"
+npm install
+npm run dev
+```
+Visit `http://localhost:3000`.
+
+---
+
+## Quick Reference — All 4 terminals
 
 | Terminal | Command |
 |----------|---------|
 | 1 — API Server | `python -m uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload` |
 | 2 — Worker | `python run_worker.py` |
 | 3 — ngrok tunnel | `ngrok http 8000` |
+| 4 — Dashboard (optional) | `npm run dev` (from `frontend/`) |
