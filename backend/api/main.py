@@ -3,7 +3,10 @@ from dotenv import load_dotenv
 # Must run before any backend module is imported: backend.db.session reads
 # TIGER_DATABASE_URL at module import time (via the hitl_endpoints import
 # below), so the shell's environment is not enough on its own.
-load_dotenv()
+#
+# override=True is deliberate — see the matching note in run_worker.py: a stale
+# value left over in the shell must not silently shadow an edited .env.
+load_dotenv(override=True)
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI

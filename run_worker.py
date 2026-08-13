@@ -15,7 +15,12 @@ from dotenv import load_dotenv
 # Must run before any backend module is imported (GEMINI_API_KEY, GITHUB_TOKEN,
 # TIGER_DATABASE_URL, REDIS_URL are all read at import time or job-execution
 # time by modules pulled in via backend.queue.worker below).
-load_dotenv()
+#
+# override=True is deliberate: .env is the source of truth for local runs. Without
+# it, a stale value exported earlier in the shell (e.g. an old GITHUB_TOKEN from a
+# previous `Get-Content .env | SetEnvironmentVariable` step) silently wins over the
+# edited .env, so credential fixes appear not to take effect.
+load_dotenv(override=True)
 
 import redis as sync_redis
 
